@@ -13,9 +13,10 @@ function DiscussionRoom() {
     const { roomid } = useParams();
     const [expert, setExpert] = useState();
     const [enableMic, setEnableMic] = useState(false);
-    const [transcript, setTranscript] = useState("");
-    const [aiResponse, setAiResponse] = useState("");
+    const [messages, setMessages] = useState([]);
     const recognizer = useRef(null);
+    const chatContainerRef = useRef(null);
+    const audioRef = useRef(null);
 
     const DiscussionRoomData = useQuery(api.DiscussionRoom.GetDiscussionRoom, {
         id: roomid,
@@ -29,6 +30,13 @@ function DiscussionRoom() {
             setExpert(Expert);
         }
     }, [DiscussionRoomData]);
+
+    useEffect(() => {
+        if (chatContainerRef.current) {
+            chatContainerRef.current.scrollTop =
+                chatContainerRef.current.scrollHeight;
+        }
+    }, [messages]);
 
     const startRecording = () => {
         setEnableMic(true);
@@ -48,12 +56,15 @@ function DiscussionRoom() {
 
         recognizer.current.recognizing = (s, e) => {
             console.log("Recognizing:", e.result.text);
-            setTranscript(e.result.text);
         };
         recognizer.current.recognized = async (s, e) => {
             if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
                 console.log("Recognized:", e.result.text);
-                setTranscript((prev) => prev + " " + e.result.text);
+                const userMessage = e.result.text;
+                setMessages((prev) => [
+                    ...prev,
+                    { sender: "user", text: userMessage },
+                ]);
                 try {
                     const response = await fetch("/api/ai-model", {
                         method: "POST",
@@ -62,7 +73,7 @@ function DiscussionRoom() {
                             topic: DiscussionRoomData?.topic || "general",
                             coachingOption:
                                 DiscussionRoomData?.coachingOption || "default",
-                            msg: e.result.text,
+                            msg: userMessage,
                         }),
                     });
                     if (!response.ok) {
@@ -71,20 +82,56 @@ function DiscussionRoom() {
                             response.status,
                             response.statusText
                         );
+                        setMessages((prev) => [
+                            ...prev,
+                            {
+                                sender: "ai",
+                                text: `Error: API returned ${response.status}`,
+                            },
+                        ]);
                         return;
                     }
                     const data = await response.json();
                     if (data.error) {
                         console.error("AI Model error:", data.error);
+                        setMessages((prev) => [
+                            ...prev,
+                            { sender: "ai", text: `Error: ${data.error}` },
+                        ]);
                     } else {
-                        setAiResponse(data.choices[0].message.content);
-                        console.log(
-                            "AI Response:",
-                            data.choices[0].message.content
-                        );
+                        // Chuyển base64 thành Blob và tạo URL trên client-side
+                        const audioBytes = atob(data.audioBase64);
+                        const audioArray = new Uint8Array(audioBytes.length);
+                        for (let i = 0; i < audioBytes.length; i++) {
+                            audioArray[i] = audioBytes.charCodeAt(i);
+                        }
+                        const audioBlob = new Blob([audioArray], {
+                            type: "audio/mp3",
+                        });
+                        const audioUrl = URL.createObjectURL(audioBlob);
+
+                        setMessages((prev) => [
+                            ...prev,
+                            { sender: "ai", text: data.text, audioUrl },
+                        ]);
+                        if (audioRef.current && audioUrl) {
+                            audioRef.current.src = audioUrl;
+                            audioRef.current
+                                .play()
+                                .catch((err) =>
+                                    console.error("Audio play error:", err)
+                                );
+                        }
                     }
                 } catch (error) {
                     console.error("Error calling AI Model API:", error);
+                    setMessages((prev) => [
+                        ...prev,
+                        {
+                            sender: "ai",
+                            text: "Error: Failed to connect to AI model",
+                        },
+                    ]);
                 }
             } else {
                 console.log(
@@ -154,15 +201,38 @@ function DiscussionRoom() {
                     </div>
                 </div>
                 <div>
-                    <div className="h-[60vh] bg-secondary rounded-4xl border flex flex-col items-center justify-center relative">
-                        <h2>Chat Section</h2>
-                        <p>
-                            <strong>You:</strong> {transcript}
-                        </p>
-                        <p>
-                            <strong>AI:</strong> {aiResponse}
-                        </p>
+                    <div
+                        ref={chatContainerRef}
+                        className="h-[60vh] bg-white rounded-4xl border flex flex-col p-4 overflow-y-auto"
+                    >
+                        {messages.length === 0 ? (
+                            <p className="text-gray-400 text-center mt-4">
+                                No messages yet. Start the conversation!
+                            </p>
+                        ) : (
+                            messages.map((msg, index) => (
+                                <div
+                                    key={index}
+                                    className={`flex ${
+                                        msg.sender === "user"
+                                            ? "justify-end"
+                                            : "justify-start"
+                                    } mb-3`}
+                                >
+                                    <div
+                                        className={`max-w-[70%] p-3 rounded-2xl ${
+                                            msg.sender === "user"
+                                                ? "bg-blue-500 text-white rounded-br-none"
+                                                : "bg-gray-100 text-gray-800 rounded-bl-none"
+                                        }`}
+                                    >
+                                        <p>{msg.text}</p>
+                                    </div>
+                                </div>
+                            ))
+                        )}
                     </div>
+                    <audio ref={audioRef} />
                     <h2 className="mt-4 text-gray-400 text-sm">
                         At the end of your conversation we will automatically
                         generate feedback/notes from your conversation
