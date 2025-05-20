@@ -67,7 +67,7 @@ export async function POST(request) {
         console.log("Prompt:", PROMPT);
 
         const completion = await openai.chat.completions.create({
-            model: "openai/gpt-3.5-turbo",
+            model: "google/gemma-3-1b-it:free",
             messages: [
                 { role: "assistant", content: PROMPT },
                 { role: "user", content: msg || "Hello" },

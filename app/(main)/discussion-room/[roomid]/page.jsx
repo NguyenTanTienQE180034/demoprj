@@ -1,12 +1,12 @@
 "use client";
 import { Button } from "@/components/ui/button";
 import { useParams } from "next/navigation";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { CoachingExpert } from "@/services/Options";
 import { UserButton } from "@stackframe/stack";
 import Image from "next/image";
-import React, { useEffect, useRef, useState } from "react";
+import React, { use, useEffect, useRef, useState } from "react";
 import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
 
 function DiscussionRoom() {
@@ -21,7 +21,9 @@ function DiscussionRoom() {
     const DiscussionRoomData = useQuery(api.DiscussionRoom.GetDiscussionRoom, {
         id: roomid,
     });
-
+    const UpdateConversation = useMutation(
+        api.DiscussionRoom.UpdateConversationId
+    );
     useEffect(() => {
         if (DiscussionRoomData) {
             const Expert = CoachingExpert.find(

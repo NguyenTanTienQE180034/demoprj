@@ -25,3 +25,14 @@ export const GetDiscussionRoom = query({
         return results;
     },
 });
+export const UpdateConversationId = mutation({
+    args: {
+        id: v.id("DiscussionRooms"),
+        conversationId: v.any(),
+    },
+    handler: async (ctx, args) => {
+        await ctx.db.patch(args.id, {
+            conversationId: args.conversationId,
+        });
+    },
+});
