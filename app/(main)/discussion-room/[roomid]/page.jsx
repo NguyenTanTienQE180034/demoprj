@@ -6,14 +6,19 @@ import { api } from "@/convex/_generated/api";
 import { CoachingExpert } from "@/services/Options";
 import { UserButton } from "@stackframe/stack";
 import Image from "next/image";
-import React, { use, useEffect, useRef, useState } from "react";
+import React, { useContext, useEffect, useRef, useState } from "react";
 import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
+import { User } from "lucide-react";
 
 function DiscussionRoom() {
     const { roomid } = useParams();
+    const { userData, setUserData } = useContext(UserContext);
     const [expert, setExpert] = useState();
     const [enableMic, setEnableMic] = useState(false);
     const [messages, setMessages] = useState([]);
+    const [showFeedbackButton, setShowFeedbackButton] = useState(false);
+    const [feedback, setFeedback] = useState(null);
+    const [isGeneratingFeedback, setIsGeneratingFeedback] = useState(false); // State cho loading
     const recognizer = useRef(null);
     const chatContainerRef = useRef(null);
     const audioRef = useRef(null);
@@ -24,6 +29,8 @@ function DiscussionRoom() {
     const UpdateConversation = useMutation(
         api.DiscussionRoom.UpdateConversationId
     );
+    const UpdateSummary = useMutation(api.DiscussionRoom.UpdateSummary);
+    const UpdateUserToken = useMutation(api.users.UpdateUserToken);
     useEffect(() => {
         if (DiscussionRoomData) {
             const Expert = CoachingExpert.find(
@@ -38,7 +45,7 @@ function DiscussionRoom() {
             chatContainerRef.current.scrollTop =
                 chatContainerRef.current.scrollHeight;
         }
-    }, [messages]);
+    }, [messages, feedback]);
 
     const startRecording = () => {
         setEnableMic(true);
@@ -101,7 +108,6 @@ function DiscussionRoom() {
                             { sender: "ai", text: `Error: ${data.error}` },
                         ]);
                     } else {
-                        // Chuyển base64 thành Blob và tạo URL trên client-side
                         const audioBytes = atob(data.audioBase64);
                         const audioArray = new Uint8Array(audioBytes.length);
                         for (let i = 0; i < audioBytes.length; i++) {
@@ -158,7 +164,7 @@ function DiscussionRoom() {
         );
     };
 
-    const stopRecording = () => {
+    const stopRecording = async () => {
         if (recognizer.current) {
             recognizer.current.stopContinuousRecognitionAsync(
                 () => console.log("Recognition stopped"),
@@ -167,8 +173,85 @@ function DiscussionRoom() {
             recognizer.current = null;
         }
         setEnableMic(false);
+
+        if (messages.length > 0 && roomid) {
+            try {
+                await UpdateConversation({
+                    id: roomid,
+                    conversationId: messages,
+                });
+                console.log("Conversation saved to conversationId:", messages);
+                setShowFeedbackButton(true);
+            } catch (error) {
+                console.error("Error saving conversation:", error);
+                setMessages((prev) => [
+                    ...prev,
+                    {
+                        sender: "system",
+                        text: "Error: Failed to save conversation",
+                    },
+                ]);
+            }
+        }
     };
 
+    const generateFeedbackAndNotes = async () => {
+        setIsGeneratingFeedback(true); // Bật trạng thái loading
+        try {
+            console.log("Calling /api/feedback with:", {
+                coachingOption: DiscussionRoomData?.coachingOption || "default",
+                conversationId: messages,
+            });
+            const response = await fetch("/api/feedback", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    coachingOption:
+                        DiscussionRoomData?.coachingOption || "default",
+                    conversationId: messages,
+                }),
+            });
+            console.log("Feedback API response status:", response.status);
+            if (!response.ok) {
+                throw new Error(`Feedback API error: ${response.status}`);
+            }
+            const data = await response.json();
+            console.log("Feedback API response data:", data);
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            const feedbackText = data.feedback;
+            setFeedback(feedbackText);
+
+            // Lưu feedback vào cột summary trong ConvexDB
+            if (roomid) {
+                await UpdateSummary({
+                    id: roomid,
+                    summary: feedbackText,
+                });
+                console.log("Summary updated in ConvexDB:", feedbackText);
+            }
+        } catch (error) {
+            console.error("Error generating feedback:", error);
+            setMessages((prev) => [
+                ...prev,
+                { sender: "system", text: `Error: ${error.message}` },
+            ]);
+        } finally {
+            setIsGeneratingFeedback(false); // Tắt trạng thái loading
+        }
+    };
+    const updateUserTokenMethod = async (text) => {
+        const tokenCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+        const result = await UpdateUserToken({
+            id: userData?._id,
+            credits: Number(userData?.credits) - Number(tokenCount),
+        });
+        setUserData((prev) => ({
+            ...prev,
+            credits: Number(userData?.credits) - Number(tokenCount),
+        }));
+    };
     return (
         <div className="-mt-12">
             <h2 className="text-lg font-bold">
@@ -225,7 +308,9 @@ function DiscussionRoom() {
                                         className={`max-w-[70%] p-3 rounded-2xl ${
                                             msg.sender === "user"
                                                 ? "bg-blue-500 text-white rounded-br-none"
-                                                : "bg-gray-100 text-gray-800 rounded-bl-none"
+                                                : msg.sender === "system"
+                                                  ? "bg-red-100 text-red-800 rounded-bl-none"
+                                                  : "bg-gray-100 text-gray-800 rounded-bl-none"
                                         }`}
                                     >
                                         <p>{msg.text}</p>
@@ -233,12 +318,59 @@ function DiscussionRoom() {
                                 </div>
                             ))
                         )}
+                        {feedback && (
+                            <div className="mt-4 p-4 bg-green-100 rounded-lg">
+                                <h3 className="font-bold">Feedback & Notes</h3>
+                                <p className="whitespace-pre-wrap">
+                                    {feedback}
+                                </p>
+                            </div>
+                        )}
                     </div>
                     <audio ref={audioRef} />
-                    <h2 className="mt-4 text-gray-400 text-sm">
-                        At the end of your conversation we will automatically
-                        generate feedback/notes from your conversation
-                    </h2>
+                    <div className="mt-4">
+                        {showFeedbackButton ? (
+                            <Button
+                                onClick={generateFeedbackAndNotes}
+                                disabled={isGeneratingFeedback}
+                                className="flex items-center gap-2"
+                            >
+                                {isGeneratingFeedback ? (
+                                    <>
+                                        <svg
+                                            className="animate-spin h-5 w-5 text-white"
+                                            xmlns="http://www.w3.org/2000/svg"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <circle
+                                                className="opacity-25"
+                                                cx="12"
+                                                cy="12"
+                                                r="10"
+                                                stroke="currentColor"
+                                                strokeWidth="4"
+                                            ></circle>
+                                            <path
+                                                className="opacity-75"
+                                                fill="currentColor"
+                                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                                            ></path>
+                                        </svg>
+                                        Generating...
+                                    </>
+                                ) : (
+                                    "Generate Feedbacks and Notes"
+                                )}
+                            </Button>
+                        ) : (
+                            <h2 className="text-gray-400 text-sm">
+                                At the end of your conversation we will
+                                automatically generate feedback/notes from your
+                                conversation
+                            </h2>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>

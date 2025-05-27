@@ -12,5 +12,7 @@ export default defineSchema({
         topic: v.string(),
         expertName: v.string(),
         conversationId: v.optional(v.any()),
+        summary: v.optional(v.any()),
+        uid: v.optional(v.id("users")),
     }),
 });
