@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import { CoachingOptions } from "@/services/Options";
 import { PollyClient, SynthesizeSpeechCommand } from "@aws-sdk/client-polly";
 
-console.log("OPENROUTER_API_KEY:", process.env.OPENROUTER_API_KEY); // Debug
+console.log("OPENROUTER_API_KEY:", process.env.OPENROUTER_API_KEY);
 
 const openai = new OpenAI({
     baseURL: "https://openrouter.ai/api/v1",
@@ -29,7 +29,6 @@ const ConvertTextToSpeech = async (text, expertName) => {
     try {
         const { AudioStream } = await pollyClient.send(command);
         const audioArrayBuffer = await AudioStream.transformToByteArray();
-        // Chuyển audio buffer thành base64 để gửi về client
         const audioBase64 = Buffer.from(audioArrayBuffer).toString("base64");
         return audioBase64;
     } catch (error) {
@@ -67,7 +66,7 @@ export async function POST(request) {
         console.log("Prompt:", PROMPT);
 
         const completion = await openai.chat.completions.create({
-            model: "google/gemma-3-1b-it:free",
+            model: "google/gemma-3-4b-it:free",
             messages: [
                 { role: "assistant", content: PROMPT },
                 { role: "user", content: msg || "Hello" },
@@ -82,7 +81,7 @@ export async function POST(request) {
 
         return NextResponse.json({
             text: responseText,
-            audioBase64: audioBase64, // Trả về dữ liệu audio dưới dạng base64
+            audioBase64: audioBase64,
         });
     } catch (error) {
         console.error("Error in AI Model API:", error);
@@ -96,3 +95,51 @@ export async function POST(request) {
         );
     }
 }
+
+export const AIModelGenerateFeedbackAndNotes = async (
+    coachingOption,
+    conversationId
+) => {
+    try {
+        const option = CoachingOptions.find(
+            (item) => item.name === coachingOption
+        );
+        if (!option) {
+            throw new Error("Invalid coaching option");
+        }
+
+        const PROMPT = option.summeryPrompt;
+        if (!PROMPT) {
+            throw new Error(
+                "Summary prompt not found for this coaching option"
+            );
+        }
+
+        const conversationText = conversationId
+            .map((msg) => `${msg.sender}: ${msg.text}`)
+            .join("\n");
+
+        console.log("Summary Prompt:", PROMPT);
+        console.log("Conversation Text:", conversationText);
+
+        const completion = await openai.chat.completions.create({
+            model: "google/gemma-3-4b-it:free",
+            messages: [
+                {
+                    role: "system",
+                    content: "You are a helpful coaching assistant.",
+                },
+                {
+                    role: "user",
+                    content: `${PROMPT}\n\nConversation:\n${conversationText}`,
+                },
+            ],
+            temperature: 0.7, // Thêm để điều chỉnh độ sáng tạo, tránh tóm tắt quá máy móc
+        });
+
+        return completion.choices[0].message.content;
+    } catch (error) {
+        console.error("Error generating feedback and notes:", error);
+        throw error;
+    }
+};
